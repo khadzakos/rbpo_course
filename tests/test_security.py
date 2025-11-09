@@ -247,6 +247,16 @@ class TestSecurityIntegration:
         assert len(correlation_id) == 36
         assert correlation_id.count("-") == 4
 
+        # Проверяем security headers (506-06)
+        assert "X-Content-Type-Options" in response.headers
+        assert response.headers["X-Content-Type-Options"] == "nosniff"
+        assert "X-Frame-Options" in response.headers
+        assert response.headers["X-Frame-Options"] == "DENY"
+        assert "X-XSS-Protection" in response.headers
+        assert response.headers["X-XSS-Protection"] == "1; mode=block"
+        assert "Referrer-Policy" in response.headers
+        assert "Content-Security-Policy" in response.headers
+
     def test_error_consistency(self, client):
         """Тест консистентности ошибок между endpoints"""
         endpoints = [
@@ -283,3 +293,69 @@ class TestSecurityIntegration:
             response = client.post("/users", json=test_data)
             assert response.status_code == 422
             assert "X-Correlation-ID" in response.headers
+
+    def test_rate_limiting(self, client):
+        """Тест rate limiting"""
+        import os
+        from app.security import _rate_limiter
+
+        original_testing = os.environ.get("TESTING")
+        os.environ["TESTING"] = "false"
+        _rate_limiter.clear()
+        _rate_limiter.max_requests = 5  # Низкий лимит для теста
+        _rate_limiter.window_seconds = 60
+
+        try:
+            # Делаем несколько запросов подряд
+            for _ in range(5):
+                response = client.get("/users")
+                assert response.status_code == 200
+
+            # Шестой запрос должен быть заблокирован
+            response = client.get("/users")
+            assert response.status_code == 429
+            data = response.json()
+            assert "rate limit" in data["detail"].lower()
+        finally:
+            # Восстанавливаем настройки
+            if original_testing:
+                os.environ["TESTING"] = original_testing
+            else:
+                os.environ["TESTING"] = "true"
+            _rate_limiter.max_requests = 100
+            _rate_limiter.clear()
+
+    def test_rate_limit_error_format(self, client):
+        """Тест формата ошибки rate limiting"""
+        import os
+        from app.security import _rate_limiter
+
+        original_testing = os.environ.get("TESTING")
+        os.environ["TESTING"] = "false"
+        _rate_limiter.clear()
+        _rate_limiter.max_requests = 1  # Очень низкий лимит
+        _rate_limiter.window_seconds = 60
+
+        try:
+            # Первый запрос должен пройти
+            response = client.get("/users")
+            assert response.status_code == 200
+
+            # Второй запрос должен быть заблокирован
+            response = client.get("/users")
+            assert response.status_code == 429
+            data = response.json()
+            assert "type" in data
+            assert "title" in data
+            assert "detail" in data
+            assert "correlation_id" in data
+            assert "Retry-After" in response.headers
+            assert data["title"] == "Rate Limit Exceeded"
+        finally:
+            # Восстанавливаем настройки
+            if original_testing:
+                os.environ["TESTING"] = original_testing
+            else:
+                os.environ["TESTING"] = "true"
+            _rate_limiter.max_requests = 100
+            _rate_limiter.clear()

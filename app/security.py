@@ -1,9 +1,13 @@
 import logging
 import os
 import re
+import time
 import uuid
+from collections import defaultdict
 from datetime import datetime
 from typing import Optional
+
+from fastapi.responses import JSONResponse
 
 
 class SecureHTTPException(Exception):
@@ -263,4 +267,156 @@ ERROR_TYPES = {
     "authorization_error": "https://api.choretracker.com/errors/authorization-error",
     "not_found_error": "https://api.choretracker.com/errors/not-found-error",
     "internal_error": "https://api.choretracker.com/errors/internal-error",
+    "rate_limit_error": "https://api.choretracker.com/errors/rate-limit-error",
 }
+
+
+class SecurityHeadersMiddleware:
+    """Middleware для добавления security headers (506-06)"""
+
+    @staticmethod
+    async def add_security_headers(request, call_next):
+        """Добавляет security headers к каждому ответу"""
+        response = await call_next(request)
+
+        response.headers["X-Content-Type-Options"] = "nosniff"
+
+        response.headers["X-Frame-Options"] = "DENY"
+
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+
+        if os.getenv("ENVIRONMENT") == "production":
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=31536000; includeSubDomains"
+            )
+
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+        csp = (
+            "default-src 'self'; "
+            "script-src 'none'; "
+            "object-src 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'"
+        )
+        response.headers["Content-Security-Policy"] = csp
+
+        return response
+
+
+class RateLimiter:
+    """Простой rate limiter для защиты от брутфорса (506-08)"""
+
+    def __init__(
+        self,
+        max_requests: int = 100,
+        window_seconds: int = 60,
+        block_duration: int = 300,
+    ):
+        """
+        Args:
+            max_requests: Максимальное количество запросов в окне
+            window_seconds: Размер временного окна в секундах
+            block_duration: Длительность блокировки в секундах после превышения лимита
+        """
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self.block_duration = block_duration
+        self.requests = defaultdict(list)
+        self.blocked = {}
+
+    def clear(self):
+        """Очищает все данные rate limiter (для тестов)"""
+        self.requests.clear()
+        self.blocked.clear()
+
+    def _get_client_id(self, request) -> str:
+        """Получает идентификатор клиента из запроса"""
+        forwarded_for = request.headers.get("X-Forwarded-For")
+        if forwarded_for:
+            client_ip = forwarded_for.split(",")[0].strip()
+        else:
+            client_ip = request.client.host if request.client else "unknown"
+
+        return client_ip
+
+    def _cleanup_old_requests(self, client_id: str, current_time: float):
+        """Удаляет старые запросы вне временного окна"""
+        cutoff_time = current_time - self.window_seconds
+        self.requests[client_id] = [
+            ts for ts in self.requests[client_id] if ts > cutoff_time
+        ]
+
+    def is_allowed(self, request) -> tuple[bool, Optional[str]]:
+        """
+        Проверяет, разрешен ли запрос
+        Returns:
+            (is_allowed, error_message)
+        """
+        client_id = self._get_client_id(request)
+        current_time = time.time()
+
+        if client_id in self.blocked:
+            block_until = self.blocked[client_id]
+            if current_time < block_until:
+                remaining = int(block_until - current_time)
+                return False, f"Rate limit exceeded. Try again in {remaining} seconds"
+            else:
+                del self.blocked[client_id]
+
+        self._cleanup_old_requests(client_id, current_time)
+
+        request_count = len(self.requests[client_id])
+        if request_count >= self.max_requests:
+            self.blocked[client_id] = current_time + self.block_duration
+            return (
+                False,
+                f"Rate limit exceeded. Blocked for {self.block_duration} seconds",
+            )
+
+        self.requests[client_id].append(current_time)
+        return True, None
+
+
+_rate_limiter = RateLimiter(
+    max_requests=int(os.getenv("RATE_LIMIT_MAX_REQUESTS", "100")),
+    window_seconds=int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60")),
+    block_duration=int(os.getenv("RATE_LIMIT_BLOCK_DURATION", "300")),
+)
+
+
+class RateLimitMiddleware:
+    """Middleware для rate limiting (506-08)"""
+
+    @staticmethod
+    async def rate_limit_middleware(request, call_next):
+        """Применяет rate limiting к запросам"""
+        # Отключаем rate limiting в тестовом окружении
+        if os.getenv("TESTING", "false").lower() == "true":
+            return await call_next(request)
+
+        if request.url.path in ["/health", "/docs", "/redoc", "/openapi.json"]:
+            return await call_next(request)
+
+        is_allowed, error_message = _rate_limiter.is_allowed(request)
+
+        if not is_allowed:
+            error_response = create_error_response(
+                request=request,
+                error_type=ERROR_TYPES["rate_limit_error"],
+                title="Rate Limit Exceeded",
+                detail=error_message or "Too many requests",
+                status_code=429,
+            )
+
+            return JSONResponse(
+                status_code=error_response["status_code"],
+                content=error_response["content"],
+                headers={
+                    **error_response["headers"],
+                    "Retry-After": str(_rate_limiter.block_duration),
+                },
+            )
+
+        response = await call_next(request)
+        return response

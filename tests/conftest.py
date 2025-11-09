@@ -1,4 +1,5 @@
 # tests/conftest.py
+import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -12,9 +13,12 @@ ROOT = Path(__file__).resolve().parents[1]  # корень репозитори�
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+os.environ["TESTING"] = "true"
+
 from app.config import get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import Base  # noqa: E402
+from app.security import _rate_limiter  # noqa: E402
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
 engine = create_engine(
@@ -36,6 +40,9 @@ app.dependency_overrides[get_db] = override_get_db
 
 @pytest.fixture(scope="function")
 def client():
+    # Очищаем rate limiter перед каждым тестом
+    _rate_limiter.clear()
+    
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     with TestClient(app) as test_client:
