@@ -297,6 +297,7 @@ class TestSecurityIntegration:
     def test_rate_limiting(self, client):
         """Тест rate limiting"""
         import os
+
         from app.security import _rate_limiter
 
         original_testing = os.environ.get("TESTING")
@@ -328,6 +329,7 @@ class TestSecurityIntegration:
     def test_rate_limit_error_format(self, client):
         """Тест формата ошибки rate limiting"""
         import os
+
         from app.security import _rate_limiter
 
         original_testing = os.environ.get("TESTING")

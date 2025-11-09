@@ -42,7 +42,7 @@ app.dependency_overrides[get_db] = override_get_db
 def client():
     # Очищаем rate limiter перед каждым тестом
     _rate_limiter.clear()
-    
+
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     with TestClient(app) as test_client:
