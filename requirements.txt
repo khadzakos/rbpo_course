@@ -1,0 +1,8 @@
+fastapi==0.112.2
+uvicorn==0.30.5
+sqlalchemy==2.0.25
+pydantic[email]==2.5.3
+python-multipart==0.0.6
+cryptography==41.0.7
+hvac==2.0.0
+python-magic==0.4.27

@@ -1,0 +1,16 @@
+# CODEOWNERS file
+* @khadzakos @DaniilCS
+
+/app/ @khadzakos @DaniilCS
+
+/tests/ @khadzakos @DaniilCS
+
+/.github/ @khadzakos @DaniilCS
+
+README.md @khadzakos @DaniilCS
+SECURITY.md @khadzakos @DaniilCS
+
+pyproject.toml @khadzakos @DaniilCS
+requirements*.txt @khadzakos @DaniilCS
+Dockerfile @khadzakos @DaniilCS
+compose.yaml @khadzakos @DaniilCS
