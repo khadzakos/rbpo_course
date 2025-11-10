@@ -9,7 +9,9 @@ from .api import router
 from .config import create_tables
 from .security import (
     ERROR_TYPES,
+    RateLimitMiddleware,
     SecureHTTPException,
+    SecurityHeadersMiddleware,
     create_error_response,
     setup_security_logging,
 )
@@ -30,6 +32,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """Middleware для добавления security headers"""
+    return await SecurityHeadersMiddleware.add_security_headers(request, call_next)
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """Middleware для rate limiting"""
+    return await RateLimitMiddleware.rate_limit_middleware(request, call_next)
 
 
 class ApiError(Exception):
