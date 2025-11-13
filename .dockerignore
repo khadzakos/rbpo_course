@@ -15,3 +15,11 @@ build/
 htmlcov/
 node_modules/
 .env
+*.md
+docs/
+tests/
+data/
+*.log
+.DS_Store
+.vscode/
+.idea/
