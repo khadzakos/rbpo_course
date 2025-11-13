@@ -7,7 +7,11 @@ from .models import Base
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./chore_tracker.db")
 
-engine = create_engine(DATABASE_URL, echo=True)
+connect_args = {}
+if DATABASE_URL.startswith("sqlite"):
+    connect_args = {"check_same_thread": False}
+
+engine = create_engine(DATABASE_URL, echo=True, connect_args=connect_args)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
