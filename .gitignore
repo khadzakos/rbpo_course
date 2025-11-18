@@ -18,3 +18,8 @@ build/
 *.db
 *.sqlite
 *.sqlite3
+# CI/CD artifacts
+reports/
+htmlcov/
+.ruff_cache/
+*.tar.gz
