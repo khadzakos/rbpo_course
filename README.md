@@ -138,8 +138,28 @@ docker-compose up --build
 }
 ```
 
-## CI
-В репозитории настроен workflow **CI** (GitHub Actions) — required check для `main`.
-Badge добавится автоматически после загрузки шаблона в GitHub.
+## CI/CD
+
+В репозитории настроен workflow **CI/CD** (GitHub Actions) с поддержкой:
+- Матрица тестирования (Python 3.11, 3.12 на Ubuntu и macOS)
+- Параллельные шаги (lint, test, build)
+- Кэширование зависимостей и Docker слоёв
+- Coverage отчёты (HTML и XML)
+
+### Настройка GitHub Secrets
+
+Для полной функциональности CI/CD настройте секреты в GitHub:
+**Settings → Secrets and variables → Actions → New repository secret**
+
+#### Обязательные секреты (для тестов):
+- `DATABASE_URL` - URL базы данных (опционально, по умолчанию используется SQLite)
+- `JWT_SECRET` - секретный ключ для JWT (опционально, есть fallback)
+
+### Артефакты CI/CD
+
+После каждого запуска доступны артефакты:
+- `lint-reports` - отчёты линтеров
+- `test-reports-{python-version}-{os}` - JUnit XML и coverage отчёты для каждой комбинации Python/OS
+- `docker-image` - собранный Docker образ (только для main branch)
 
 См. также: `SECURITY.md`, `.pre-commit-config.yaml`, `.github/workflows/ci.yml`.
