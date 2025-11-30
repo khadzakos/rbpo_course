@@ -1,0 +1,33 @@
+rules:
+  - id: py-unsafe-html-echo
+    languages: [python]
+    message: "Потенциально небезопасный вывод пользовательских данных в HTMLResponse"
+    severity: WARNING
+    patterns:
+      - pattern: |
+          HTMLResponse(f"...{$X}...")
+    metadata:
+      category: security
+      cwe: "CWE-79: Cross-site Scripting"
+
+  - id: py-fastapi-cors-wildcard
+    languages: [python]
+    message: "CORS настроен на разрешение всех origins (*) - может быть небезопасно для production"
+    severity: WARNING
+    patterns:
+      - pattern-either:
+          - pattern: |
+              CORSMiddleware(
+                ...
+                allow_origins=["*"],
+                ...
+              )
+          - pattern: |
+              CORSMiddleware(
+                ...
+                allow_origins=["*"]
+              )
+    metadata:
+      category: security
+      cwe: "CWE-942: Overly Permissive Cross-domain Whitelist"
+
