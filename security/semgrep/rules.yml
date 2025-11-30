@@ -15,18 +15,7 @@ rules:
     message: "CORS настроен на разрешение всех origins (*) - может быть небезопасно для production"
     severity: WARNING
     patterns:
-      - pattern-either:
-          - pattern: |
-              CORSMiddleware(
-                ...
-                allow_origins=["*"],
-                ...
-              )
-          - pattern: |
-              CORSMiddleware(
-                ...
-                allow_origins=["*"]
-              )
+      - pattern: allow_origins=["*"]
     metadata:
       category: security
       cwe: "CWE-942: Overly Permissive Cross-domain Whitelist"
