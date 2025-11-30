@@ -1,0 +1,106 @@
+name: Security - SBOM & SCA
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'rbpo_course/requirements*.txt'
+      - 'rbpo_course/**/*.py'
+      - '.github/workflows/ci-sbom-sca.yml'
+  pull_request:
+    paths:
+      - 'rbpo_course/requirements*.txt'
+      - 'rbpo_course/**/*.py'
+      - '.github/workflows/ci-sbom-sca.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  sbom-sca:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create EVIDENCE directory
+        run: mkdir -p EVIDENCE/P09
+
+      - name: Generate SBOM with Syft
+        working-directory: rbpo_course
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}/rbpo_course:/work \
+            -w /work \
+            anchore/syft:latest \
+            packages dir:. -o cyclonedx-json > ../EVIDENCE/P09/sbom.json
+
+      - name: Run SCA scan with Grype
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}/EVIDENCE/P09:/work \
+            -w /work \
+            anchore/grype:latest \
+            sbom:/work/sbom.json -o json > /work/sca_report.json || true
+
+      - name: Generate SCA summary
+        run: |
+          echo "# SCA Vulnerability Summary" > EVIDENCE/P09/sca_summary.md
+          echo "" >> EVIDENCE/P09/sca_summary.md
+          echo "Generated: $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> EVIDENCE/P09/sca_summary.md
+          echo "" >> EVIDENCE/P09/sca_summary.md
+          
+          if [ -f EVIDENCE/P09/sca_report.json ]; then
+            python3 -c "
+          import json
+          
+          try:
+              with open('EVIDENCE/P09/sca_report.json', 'r') as f:
+                  data = json.load(f)
+              
+              matches = data.get('matches', [])
+              total = len(matches)
+              
+              severity_count = {}
+              for match in matches:
+                  severity = match.get('vulnerability', {}).get('severity', 'Unknown')
+                  severity_count[severity] = severity_count.get(severity, 0) + 1
+              
+              print('## Severity Distribution')
+              print('')
+              for severity in ['Critical', 'High', 'Medium', 'Low', 'Info', 'Unknown']:
+                  count = severity_count.get(severity, 0)
+                  if count > 0:
+                      print(f'- **{severity}**: {count}')
+              print('')
+              print(f'## Total Vulnerabilities Found: {total}')
+              print('')
+              print('Review the detailed report in \`sca_report.json\` for vulnerability information.')
+          except Exception as e:
+              print(f'Error processing report: {e}')
+              print('Review the detailed report in \`sca_report.json\` for vulnerability information.')
+          " >> EVIDENCE/P09/sca_summary.md
+          else
+            echo "SCA report not found. Check workflow logs for errors." >> EVIDENCE/P09/sca_summary.md
+          fi
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: EVIDENCE/P09/sbom.json
+          retention-days: 90
+
+      - name: Upload SCA report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sca-report
+          path: EVIDENCE/P09/sca_report.json
+          retention-days: 90
+
+      - name: Upload SCA summary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sca-summary
+          path: EVIDENCE/P09/sca_summary.md
+          retention-days: 90
