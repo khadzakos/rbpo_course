@@ -1,0 +1,13 @@
+waivers:
+  - vulnerability_id: "CVE-2024-24762"
+    package: "python-multipart@0.0.6"
+    severity: "High"
+    reason: |
+      Уязвимость ReDoS (Regular Expression Denial of Service) в Content-Type header парсере.
+      Атакующий может отправить специально сформированный Content-Type header, который вызывает
+      чрезмерное потребление CPU ресурсов и блокирует обработку запросов на длительное время.
+      Риск смягчен тем, что приложение использует валидацию входных данных и обрабатывает
+      только доверенные источники. Обновление до версии 0.0.7+ устраняет уязвимость.
+    issue_pr: https://github.com/khadzakos/rbpo_course/issues/5
+    created_date: "2025-11-30"
+    approved_by: "khadzakos"
