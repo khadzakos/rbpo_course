@@ -1,0 +1,204 @@
+name: Security - DAST (P11, ZAP baseline)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "app/**"
+      - "src/**"
+      - ".github/workflows/ci-p11-dast.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dast_p11:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure evidence dirs
+        run: mkdir -p EVIDENCE/P11
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create .env file
+        env:
+          JWT_SECRET: ${{ secrets.JWT_SECRET || 'test-secret-key-for-ci-min-32-chars-long' }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql+asyncpg://postgres:postgres@db:5432/reading_list' }}
+        run: |
+          cat > .env << EOF
+          DATABASE_URL=${{ env.DATABASE_URL }}
+          JWT_SECRET=${{ env.JWT_SECRET }}
+          LOG_LEVEL=INFO
+          EOF
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          tags: reading-list-api:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Start services with docker-compose
+        run: |
+          # Запускаем только db и app, без frontend
+          docker compose up -d db app --wait
+
+      - name: Wait for app to be healthy
+        run: |
+          timeout 60 bash -c 'until curl -sf http://localhost:8000/healthz; do sleep 2; done'
+          echo "✓ Application is healthy"
+
+      - name: Test health endpoint
+        run: |
+          curl -f http://localhost:8000/healthz
+          curl -s http://localhost:8000/healthz | grep -q "ok"
+          echo "✓ Health check passed"
+
+      - name: ZAP Baseline
+        run: |
+          # Получаем имя сети docker-compose напрямую
+          APP_CONTAINER=$(docker compose ps -q app)
+          if [ -z "$APP_CONTAINER" ]; then
+            echo "ERROR: app container not found!"
+            docker compose ps
+            exit 1
+          fi
+
+          # Получаем имя сети из контейнера - выбираем backend сеть
+          # Контейнер подключён к нескольким сетям (backend и frontend), нам нужна backend
+          NETWORK_NAME=$(docker inspect $APP_CONTAINER --format='{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' | grep backend | head -1)
+
+          # Если не нашли backend, берём первую доступную сеть
+          if [ -z "$NETWORK_NAME" ]; then
+            NETWORK_NAME=$(docker inspect $APP_CONTAINER --format='{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' | head -1)
+          fi
+
+          if [ -z "$NETWORK_NAME" ]; then
+            echo "ERROR: Network name not found!"
+            docker inspect $APP_CONTAINER --format='{{json .NetworkSettings.Networks}}'
+            exit 1
+          fi
+
+          echo "Using network: $NETWORK_NAME"
+          docker network inspect $NETWORK_NAME > /dev/null || {
+            echo "ERROR: Network $NETWORK_NAME does not exist!"
+            docker network ls
+            exit 1
+          }
+
+          # Используем имя сети docker-compose для подключения ZAP к приложению
+          # Обращаемся к сервису по имени 'app' из docker-compose
+          # Используем официальный образ ZAP с опциями -quickurl и -quickout для baseline scan
+
+          # Создаём директорию для отчётов с полными правами, чтобы контейнер мог писать в неё
+          mkdir -p zap-reports
+          chmod 777 zap-reports
+
+          # Запускаем два сканирования для получения HTML и JSON отчётов
+          # Используем -u 0 (root) чтобы избежать проблем с правами доступа к volume
+          # Используем /docs как стартовую точку, чтобы избежать 404 на корне
+
+          echo "Running ZAP baseline scan (HTML report)..."
+          docker run --rm \
+            --user 0 \
+            --network "$NETWORK_NAME" \
+            -v "$PWD/zap-reports:/zap/wrk/:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap.sh -cmd -quickurl http://app:8000/docs \
+            -quickout /zap/wrk/zap_baseline.html \
+            -quickprogress || true
+
+          echo "Running ZAP baseline scan (JSON report)..."
+          docker run --rm \
+            --user 0 \
+            --network "$NETWORK_NAME" \
+            -v "$PWD/zap-reports:/zap/wrk/:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap.sh -cmd -quickurl http://app:8000/docs \
+            -quickout /zap/wrk/zap_baseline.json \
+            -quickprogress || true
+
+          # Проверяем, что файлы созданы и перемещаем их
+          if [ -f zap-reports/zap_baseline.html ] && [ -f zap-reports/zap_baseline.json ]; then
+            mv zap-reports/zap_baseline.html zap_baseline.html
+            mv zap-reports/zap_baseline.json zap_baseline.json
+          else
+            echo "Reports not found in zap-reports directory:"
+            ls -la zap-reports/
+          fi
+
+          # Отчёты создаются в /zap/wrk внутри контейнера, который маппится на $PWD
+          # Проверяем и перемещаем их в EVIDENCE/P11
+          if [ -f zap_baseline.html ] && [ -f zap_baseline.json ]; then
+            mv zap_baseline.html zap_baseline.json EVIDENCE/P11/
+            echo "✓ ZAP baseline scan completed - reports saved to EVIDENCE/P11/"
+            ls -lh EVIDENCE/P11/zap_baseline.*
+          else
+            echo "⚠️ ERROR: ZAP reports not found!"
+            echo "Current directory contents:"
+            ls -la | grep -E "(zap|EVIDENCE)" || true
+            exit 1
+          fi
+
+      - name: Install jq for JSON parsing
+        run: |
+          sudo apt-get update && sudo apt-get install -y jq || true
+
+      - name: Show ZAP summary
+        if: always()
+        run: |
+          if [ -f EVIDENCE/P11/zap_baseline.json ]; then
+            echo "## ZAP Baseline Scan Summary" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Target**: http://localhost:8000/" >> $GITHUB_STEP_SUMMARY
+            echo "**Swagger UI**: http://localhost:8000/docs" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            # Пытаемся извлечь статистику из JSON (если доступно)
+            if command -v jq >/dev/null 2>&1; then
+              # ZAP baseline JSON может иметь разную структуру, пробуем несколько вариантов
+              HIGH=$(jq -r '[.site[]?.alerts[]? | select(.riskcode == "3" or .risk == "High")] | length' EVIDENCE/P11/zap_baseline.json 2>/dev/null || echo "0")
+              MEDIUM=$(jq -r '[.site[]?.alerts[]? | select(.riskcode == "2" or .risk == "Medium")] | length' EVIDENCE/P11/zap_baseline.json 2>/dev/null || echo "0")
+              LOW=$(jq -r '[.site[]?.alerts[]? | select(.riskcode == "1" or .risk == "Low")] | length' EVIDENCE/P11/zap_baseline.json 2>/dev/null || echo "0")
+              INFO=$(jq -r '[.site[]?.alerts[]? | select(.riskcode == "0" or .risk == "Informational")] | length' EVIDENCE/P11/zap_baseline.json 2>/dev/null || echo "0")
+              echo "| Severity | Count |" >> $GITHUB_STEP_SUMMARY
+              echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+              echo "| High | $HIGH |" >> $GITHUB_STEP_SUMMARY
+              echo "| Medium | $MEDIUM |" >> $GITHUB_STEP_SUMMARY
+              echo "| Low | $LOW |" >> $GITHUB_STEP_SUMMARY
+              echo "| Informational | $INFO |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "⚠️ jq not available, cannot parse JSON report" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Reports saved to \`EVIDENCE/P11/\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "View HTML report: Download artifact \`P11_EVIDENCE\` and open \`zap_baseline.html\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ ZAP baseline report not found" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload P11 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: P11_EVIDENCE
+          path: EVIDENCE/P11
+          retention-days: 30
+
+      - name: Cleanup
+        if: always()
+        run: docker compose down -v
