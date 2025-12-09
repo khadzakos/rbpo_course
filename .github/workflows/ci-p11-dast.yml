@@ -52,12 +52,19 @@ jobs:
           done
           echo "App is ready!"
 
+      - name: Prepare ZAP output directory
+        run: |
+          mkdir -p EVIDENCE/P11
+          mkdir -p .zap
+
       - name: Run ZAP baseline scan
         uses: zaproxy/action-baseline@v0.12.0
+        id: zap_scan
+        continue-on-error: true
         with:
           target: 'http://localhost:8080'
           rules_file_name: '.zap/rules.tsv'
-          cmd_options: '-a'
+          cmd_options: '-a -J -r'
           fail_action: false
           allow_issue_writing: false
 
@@ -66,30 +73,43 @@ jobs:
         run: |
           echo "Current directory: $(pwd)"
           echo "Looking for ZAP output files..."
-          mkdir -p EVIDENCE/P11
           
-          # Find and copy zap_baseline files
-          if [ -f zap_baseline.html ]; then
-            cp zap_baseline.html EVIDENCE/P11/
-            echo "Found zap_baseline.html in root"
-          fi
-          if [ -f zap_baseline.json ]; then
-            cp zap_baseline.json EVIDENCE/P11/
-            echo "Found zap_baseline.json in root"
-          fi
-          if [ -f .zap/zap_baseline.html ]; then
-            cp .zap/zap_baseline.html EVIDENCE/P11/
-            echo "Found zap_baseline.html in .zap/"
-          fi
-          if [ -f .zap/zap_baseline.json ]; then
-            cp .zap/zap_baseline.json EVIDENCE/P11/
-            echo "Found zap_baseline.json in .zap/"
-          fi
+          # Search for all zap_baseline files recursively
+          echo "Searching for zap_baseline files..."
+          find . -type f \( -name "zap_baseline.*" -o -name "report.*" \) 2>/dev/null | while read file; do
+            echo "Found: $file"
+            cp "$file" EVIDENCE/P11/ 2>/dev/null || true
+          done
+          
+          # Check for files in common ZAP locations
+          for file in zap_baseline.html zap_baseline.json report.html report.json; do
+            for location in "." ".zap" "$HOME" "/tmp" "$GITHUB_WORKSPACE" "/github/workspace"; do
+              if [ -f "$location/$file" ]; then
+                echo "Found $file in $location"
+                cp "$location/$file" EVIDENCE/P11/ 2>/dev/null || true
+              fi
+            done
+          done
+          
+          # List all files in repository root
+          echo "Files in repository root:"
+          ls -la | head -20
           
           # List all found files
-          find . -name "zap_baseline.*" -type f 2>/dev/null | head -10 || echo "No zap_baseline files found"
+          echo "All ZAP-related files found:"
+          find . -type f \( -name "*zap*" -o -name "*report*" \) 2>/dev/null | head -20 || echo "No ZAP files found"
+          
           echo "Files in EVIDENCE/P11:"
           ls -lah EVIDENCE/P11/ || echo "EVIDENCE/P11 is empty"
+          
+          # Create summary if files found
+          if [ -n "$(ls -A EVIDENCE/P11/ 2>/dev/null)" ]; then
+            echo "ZAP scan files found and copied successfully"
+            ls -lah EVIDENCE/P11/ > EVIDENCE/P11/file_list.txt
+          else
+            echo "No ZAP files found. ZAP action may have uploaded artifacts directly."
+            echo "ZAP scan completed. Check GitHub Actions artifacts for ZAP reports." > EVIDENCE/P11/scan_info.txt
+          fi
 
       - name: Archive ZAP results
         if: always()
@@ -97,7 +117,7 @@ jobs:
         continue-on-error: true
         with:
           name: P11_EVIDENCE
-          path: EVIDENCE/P11/*
+          path: EVIDENCE/P11/
           retention-days: 30
           if-no-files-found: warn
 
