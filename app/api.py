@@ -173,31 +173,9 @@ def get_assignment_service(db: Session = Depends(get_db)) -> AssignmentService:
 router = APIRouter()
 
 
-@router.get("/", tags=["Root"], summary="Корневой эндпойнт API")
-def root():
-    """Корневой эндпойнт API"""
-    return {
-        "name": "Chore Tracker API",
-        "version": "0.1.0",
-        "status": "ok",
-        "docs": "/docs",
-        "health": "/health"
-    }
-
-
 @router.get("/health", tags=["Health"], summary="Проверка состояния API")
 def health():
     """Проверка работоспособности API"""
-    return {"status": "ok"}
-
-
-@router.get(
-    "/healthz",
-    tags=["Health"],
-    summary="Проверка состояния API (альтернативный endpoint)",
-)
-def healthz():
-    """Проверка работоспособности API (альтернативный endpoint для CI/CD)"""
     return {"status": "ok"}
 
 
