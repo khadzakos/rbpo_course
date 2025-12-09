@@ -65,7 +65,7 @@ jobs:
       - name: Test health endpoint
         run: |
           curl -f http://localhost:8000/healthz
-          curl -s http://localhost:8000/healthz | grep -q "healthy"
+          curl -s http://localhost:8000/healthz | grep -q "ok"
           echo "✓ Health check passed"
 
       - name: ZAP Baseline
