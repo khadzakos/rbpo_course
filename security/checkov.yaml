@@ -1,0 +1,25 @@
+framework:
+  - dockerfile
+  - docker_compose
+  - kubernetes
+
+# Skip checks (optional - add specific check IDs if needed)
+# skip-check:
+#   - CKV_DOCKER_1
+#   - CKV_DOCKER_2
+
+# Soft fail (optional)
+soft-fail: false
+
+# Output formats
+output:
+  - cli
+  - json
+  - sarif
+
+# Include/exclude paths
+# include:
+#   - iac/
+# exclude:
+#   - iac/temp/
+

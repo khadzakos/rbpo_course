@@ -1,0 +1,155 @@
+name: P12 - IaC and Container Security
+
+on:
+  push:
+    branches: [ main, develop, p12-iac-container ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: app
+  IMAGE_TAG: local
+  DOCKERFILE_PATH: Dockerfile
+  IAC_PATH: iac
+
+jobs:
+  container-security:
+    name: Container and IaC Security Scanning
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build container image
+        id: build-image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ env.DOCKERFILE_PATH }}
+          push: false
+          tags: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          outputs: type=docker,dest=/tmp/image.tar
+
+      - name: Load image
+        run: docker load -i /tmp/image.tar
+
+      - name: Create evidence directory
+        run: mkdir -p EVIDENCE/P12
+
+      # Hadolint - Dockerfile linting
+      - name: Run Hadolint on Dockerfile
+        id: hadolint
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            hadolint/hadolint:latest \
+            hadolint \
+            --config security/hadolint.yaml \
+            --format json \
+            ${{ env.DOCKERFILE_PATH }} > EVIDENCE/P12/hadolint.json || true
+          
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            hadolint/hadolint:latest \
+            hadolint \
+            --config security/hadolint.yaml \
+            --format tty \
+            ${{ env.DOCKERFILE_PATH }} || true
+
+      - name: Checkov - IaC scanning
+        id: checkov
+        continue-on-error: true
+        run: |
+          # Scan root Dockerfile and docker-compose.yaml
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            bridgecrew/checkov:latest \
+            --file ${{ env.DOCKERFILE_PATH }} \
+            --file docker-compose.yaml \
+            --directory ${{ env.IAC_PATH }} \
+            --framework dockerfile docker_compose kubernetes \
+            --config-file security/checkov.yaml \
+            --output json \
+            --output-file EVIDENCE/P12/checkov.json || true
+          
+          docker run --rm \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            bridgecrew/checkov:latest \
+            --file ${{ env.DOCKERFILE_PATH }} \
+            --file docker-compose.yaml \
+            --directory ${{ env.IAC_PATH }} \
+            --framework dockerfile docker_compose kubernetes \
+            --config-file security/checkov.yaml \
+            --output cli || true
+
+      # Trivy - Container image scanning
+      - name: Run Trivy vulnerability scanner
+        id: trivy
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            aquasec/trivy:latest \
+            image \
+            --config security/trivy.yaml \
+            --format json \
+            --output EVIDENCE/P12/trivy.json \
+            ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} || true
+          
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            aquasec/trivy:latest \
+            image \
+            --config security/trivy.yaml \
+            --format table \
+            ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} || true
+
+      - name: Generate summary report
+        run: |
+          cat > EVIDENCE/P12/summary.md << 'EOF'
+          # P12 - IaC and Container Security Report
+          
+          ## Scan Results
+          
+          ### Hadolint (Dockerfile Linting)
+          - Report: `hadolint.json`
+          - Status: ${{ steps.hadolint.outcome }}
+          
+          ### Checkov (IaC Security)
+          - Report: `checkov.json`
+          - Status: ${{ steps.checkov.outcome }}
+          
+          ### Trivy (Container Image Scanning)
+          - Report: `trivy.json`
+          - Status: ${{ steps.trivy.outcome }}
+          
+          ## Next Steps
+          1. Review all reports in this directory
+          2. Address critical and high severity findings
+          3. Update security configurations as needed
+          EOF
+
+      - name: Upload security reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: p12-security-reports
+          path: EVIDENCE/P12/
+          retention-days: 30
+
