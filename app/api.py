@@ -179,6 +179,12 @@ def health():
     return {"status": "ok"}
 
 
+@router.get("/healthz", tags=["Health"], summary="Проверка состояния API (healthz)")
+def healthz():
+    """Проверка работоспособности API для health checks"""
+    return {"status": "ok"}
+
+
 @router.get(
     "/statistics", tags=["Statistics"], summary="Получить статистику по назначениям"
 )
