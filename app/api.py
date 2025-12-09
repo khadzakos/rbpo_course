@@ -184,6 +184,7 @@ def root():
         "health": "/health"
     }
 
+
 @router.get("/health", tags=["Health"], summary="Проверка состояния API")
 def health():
     """Проверка работоспособности API"""
