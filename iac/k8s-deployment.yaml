@@ -1,0 +1,204 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rbpo-app
+  labels:
+    app: rbpo-app
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: rbpo-app
+  template:
+    metadata:
+      labels:
+        app: rbpo-app
+        version: v1
+    spec:
+      # Security: Run as non-root user (defined in Dockerfile)
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: app
+        image: app:local
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: rbpo-secrets
+              key: database-url
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: HOST
+          value: "0.0.0.0"
+        - name: PORT
+          value: "8000"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 40
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+            add:
+            - NET_BIND_SERVICE
+        volumeMounts:
+        - name: data
+          mountPath: /app/data
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: data
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rbpo-app-service
+  labels:
+    app: rbpo-app
+spec:
+  type: ClusterIP  # Internal only - not exposed externally
+  ports:
+  - port: 80
+    targetPort: 8000
+    protocol: TCP
+    name: http
+  selector:
+    app: rbpo-app
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rbpo-secrets
+type: Opaque
+stringData:
+  database-url: "postgresql://chore_user:chore_password@rbpo-db-service:5432/chore_tracker"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rbpo-db
+  labels:
+    app: rbpo-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rbpo-db
+  template:
+    metadata:
+      labels:
+        app: rbpo-db
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: postgres
+        image: postgres:16-alpine
+        env:
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: rbpo-secrets
+              key: postgres-user
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: rbpo-secrets
+              key: postgres-password
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: rbpo-secrets
+              key: postgres-db
+        ports:
+        - containerPort: 5432
+          name: postgres
+          protocol: TCP
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: postgres-data
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rbpo-db-service
+  labels:
+    app: rbpo-db
+spec:
+  type: ClusterIP  # Internal only
+  ports:
+  - port: 5432
+    targetPort: 5432
+    protocol: TCP
+    name: postgres
+  selector:
+    app: rbpo-db
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+

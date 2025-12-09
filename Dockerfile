@@ -39,6 +39,8 @@ COPY --chown=appuser:appuser . .
 ENV PATH=/home/appuser/.local/bin:$PATH
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
+ENV HOST=0.0.0.0
+ENV PORT=8000
 
 RUN mkdir -p /app/data && chown appuser:appuser /app/data
 
@@ -47,6 +49,6 @@ USER appuser
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD curl -f http://localhost:${PORT}/health || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn app.main:app --host ${HOST} --port ${PORT}"]
