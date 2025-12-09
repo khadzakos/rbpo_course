@@ -83,35 +83,52 @@ jobs:
             rm /tmp/app.pid
           fi
 
-      - name: Prepare evidence directory
-        run: |
-          mkdir -p EVIDENCE/P11
-
-      - name: Copy ZAP reports to evidence
+      - name: Find and copy ZAP reports
         if: always()
         run: |
-          if [ -f report_html/zap_baseline.html ]; then
-            cp report_html/zap_baseline.html EVIDENCE/P11/ || true
+          mkdir -p EVIDENCE/P11
+          echo "Working directory: $(pwd)"
+          echo "GITHUB_WORKSPACE: ${{ github.workspace }}"
+          echo "Searching for ZAP reports..."
+          # Search in current directory and workspace
+          HTML_REPORT=$(find . -name "zap_baseline.html" -type f 2>/dev/null | head -1)
+          JSON_REPORT=$(find . -name "zap_baseline.json" -type f 2>/dev/null | head -1)
+          echo "Found HTML report: ${HTML_REPORT:-not found}"
+          echo "Found JSON report: ${JSON_REPORT:-not found}"
+          echo "Current directory contents:"
+          ls -la . || true
+          echo "Checking common locations:"
+          ls -la report_html/ 2>/dev/null || echo "report_html/ not found"
+          ls -la report_json/ 2>/dev/null || echo "report_json/ not found"
+          # Copy HTML report
+          if [ -n "$HTML_REPORT" ]; then
+            cp "$HTML_REPORT" EVIDENCE/P11/zap_baseline.html && echo "Copied HTML report from: $HTML_REPORT"
+          elif [ -f report_html/zap_baseline.html ]; then
+            cp report_html/zap_baseline.html EVIDENCE/P11/ && echo "Copied from report_html/"
+          elif [ -f zap_baseline.html ]; then
+            cp zap_baseline.html EVIDENCE/P11/ && echo "Copied from root"
+          else
+            echo "HTML report not found"
           fi
-          if [ -f report_json/zap_baseline.json ]; then
-            cp report_json/zap_baseline.json EVIDENCE/P11/ || true
+          # Copy JSON report
+          if [ -n "$JSON_REPORT" ]; then
+            cp "$JSON_REPORT" EVIDENCE/P11/zap_baseline.json && echo "Copied JSON report from: $JSON_REPORT"
+          elif [ -f report_json/zap_baseline.json ]; then
+            cp report_json/zap_baseline.json EVIDENCE/P11/ && echo "Copied from report_json/"
+          elif [ -f zap_baseline.json ]; then
+            cp zap_baseline.json EVIDENCE/P11/ && echo "Copied from root"
+          else
+            echo "JSON report not found"
           fi
-          if [ -f zap_baseline.html ]; then
-            cp zap_baseline.html EVIDENCE/P11/ || true
-          fi
-          if [ -f zap_baseline.json ]; then
-            cp zap_baseline.json EVIDENCE/P11/ || true
-          fi
+          echo "Files in EVIDENCE/P11/:"
+          ls -la EVIDENCE/P11/ || echo "EVIDENCE/P11/ is empty"
 
       - name: Upload ZAP reports as artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: P11_EVIDENCE
-          path: |
-            EVIDENCE/P11/**
-            report_html/**
-            report_json/**
+          path: EVIDENCE/P11/
           retention-days: 30
           if-no-files-found: warn
 

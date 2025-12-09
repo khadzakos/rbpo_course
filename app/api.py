@@ -191,7 +191,11 @@ def health():
     return {"status": "ok"}
 
 
-@router.get("/healthz", tags=["Health"], summary="Проверка состояния API (альтернативный endpoint)")
+@router.get(
+    "/healthz",
+    tags=["Health"],
+    summary="Проверка состояния API (альтернативный endpoint)",
+)
 def healthz():
     """Проверка работоспособности API (альтернативный endpoint для CI/CD)"""
     return {"status": "ok"}
