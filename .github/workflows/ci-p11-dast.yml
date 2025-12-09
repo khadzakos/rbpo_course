@@ -61,15 +61,45 @@ jobs:
           fail_action: false
           allow_issue_writing: false
 
+      - name: Find and copy ZAP results
+        if: always()
+        run: |
+          echo "Current directory: $(pwd)"
+          echo "Looking for ZAP output files..."
+          mkdir -p EVIDENCE/P11
+          
+          # Find and copy zap_baseline files
+          if [ -f zap_baseline.html ]; then
+            cp zap_baseline.html EVIDENCE/P11/
+            echo "Found zap_baseline.html in root"
+          fi
+          if [ -f zap_baseline.json ]; then
+            cp zap_baseline.json EVIDENCE/P11/
+            echo "Found zap_baseline.json in root"
+          fi
+          if [ -f .zap/zap_baseline.html ]; then
+            cp .zap/zap_baseline.html EVIDENCE/P11/
+            echo "Found zap_baseline.html in .zap/"
+          fi
+          if [ -f .zap/zap_baseline.json ]; then
+            cp .zap/zap_baseline.json EVIDENCE/P11/
+            echo "Found zap_baseline.json in .zap/"
+          fi
+          
+          # List all found files
+          find . -name "zap_baseline.*" -type f 2>/dev/null | head -10 || echo "No zap_baseline files found"
+          echo "Files in EVIDENCE/P11:"
+          ls -lah EVIDENCE/P11/ || echo "EVIDENCE/P11 is empty"
+
       - name: Archive ZAP results
         if: always()
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: P11_EVIDENCE
-          path: |
-            zap_baseline.html
-            zap_baseline.json
+          path: EVIDENCE/P11/*
           retention-days: 30
+          if-no-files-found: warn
 
       - name: Stop app
         if: always()
